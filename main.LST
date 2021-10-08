@@ -1,0 +1,414 @@
+C51 COMPILER V9.01   MAIN                                                                  03/10/2019 15:11:42 PAGE 1   
+
+
+C51 COMPILER V9.01, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN main.OBJ
+COMPILER INVOKED BY: d:\Keil\C51\BIN\C51.EXE main.c LARGE BROWSE DEBUG OBJECTEXTEND
+
+line level    source
+
+   1          #include"reg52.h"
+   2          #include<fat.h>
+   3          #include<oled.h>
+   4          #include<Usart.h>
+   5          #include"vs1003.h"
+   6          
+   7          extern u8 xdata *Data;
+   8          extern u8 SD_type;//SD卡类型,0为SD,1为SDHC,2为SD1.0,3为MMC,4为不支持
+   9          extern u8 spi_slow; 
+  10          
+  11          
+  12          u8 VOL=254;              //0到254级调节
+  13          u8 song_num=0;
+  14          u8 song_now=0;
+  15          u32 music_cluster;      //当前播放所在的簇
+  16          u32 now_play_cluster_num=0;//已经播放了多少簇
+  17          
+  18          struct DBR//DBR信息             //DBR是由硬盘MBR装载的程序段
+  19          {
+  20                  u16 DBR_addr;                           //DBR的扇区号,磁盘的0号扇区的 0X1C6~0X1C9
+  21                  u16 reverse_sector_num;         //保留扇区数,DBR扇区，偏移0X0E~0X0F
+  22                  u8 sector_num;                          //每簇所占扇区数目,DBR的偏移0X0D
+  23                  u16 fat1_addr;                           //FAT1起始扇区,也就是fat1表地址,FAT1起始扇区=DBR的扇区号+保留扇区数
+  24                  u32 fat_sector_num;                     //一个FAT的扇区数,也是每个fat表占用扇区数,从DBR的偏移0X24~0X27得到
+  25                  u16 root_cluster;                        //起始簇号,根目录所在簇号,DBR的偏移0X2C~0X2F得到,一般为2.
+  26                  u32 root_addr;                           //根目录起始扇区=FAT1的起始扇区号+一个FAT的扇区数×2+(起始簇号-2)x每簇的扇区数
+  27          }D1;
+  28          
+  29          //sbit IRIN=P3^2;       //红外传输
+  30          
+  31          sbit Key_up=P2^1;
+  32          sbit key_down=P2^3;
+  33          sbit key_left=P2^4;
+  34          sbit key_right=P2^0;
+  35          sbit key_centre=P2^2;
+  36          
+  37          #define KEY P2
+  38          
+  39          struct Music //mp3文件信息
+  40          {
+  41                  u8 name[8];        
+  42                  u32 cluster;
+  43                  u32 occupied_sectors;   
+  44          }M1[20];
+  45          
+  46          //void ButtonInit()     //按键中断初始化
+  47          //{
+  48          //      IT0=1;
+  49          //      EX0=1;
+  50          //      EA=1;
+  51          //}
+  52          void KeyDetect()
+  53          {
+  54   1              u8 a;
+  55   1              KEY=0x1f;
+C51 COMPILER V9.01   MAIN                                                                  03/10/2019 15:11:42 PAGE 2   
+
+  56   1              if((KEY&0x1f)!=0x1f)
+  57   1              {
+  58   2                      DelayMs(10);
+  59   2                      if((KEY&0x1f)==0x0f)//左按键按下
+  60   2                      {
+  61   3                              do
+  62   3                              {
+  63   4                              KEY=0x1f;
+  64   4                              }while(KEY!=0x1f);//等待松开按键
+  65   3                              if(song_now==0)//第一首
+  66   3                                      song_now=song_num-1;
+  67   3                              else
+  68   3                                      song_now--;
+  69   3                              OLEDClear();                       //oled显示
+  70   3                              for(a=0;a<8;a++)
+  71   3                                      OLEDShowChar(a*8,0,M1[song_now].name[a]);
+  72   3                              music_cluster=M1[song_now].cluster;
+  73   3                              Mp3SoftReset();
+  74   3                              now_play_cluster_num=0;
+  75   3                              OpenFile(music_cluster);
+  76   3                      }else if(((KEY&0x1f)==0x17))//下按键按下
+  77   2                      {
+  78   3                              do
+  79   3                              {
+  80   4                              KEY=0x1f;
+  81   4                              }while(KEY!=0x1f);//等待松开按键
+  82   3                              while(!VS_DREQ);
+  83   3                              if(VOL!=254)
+  84   3                                      VOL=VOL+10;
+  85   3                              VolSetting();
+  86   3      
+  87   3                      }else if((KEY&0x1f)==0x1B)//中间按下
+  88   2                      {
+  89   3                              DelayMs(100);
+  90   3                              do
+  91   3                              {
+  92   4                                      KEY=0x1f;
+  93   4                              }while(KEY!=0x1f);//等待松开按键
+  94   3                              DelayMs(100);
+  95   3                              //等待重新按下
+  96   3                              do
+  97   3                              {
+  98   4                                      KEY=0x1f;
+  99   4                              }while((KEY&0x1f)!=0x1B);
+ 100   3                              DelayMs(100);
+ 101   3                              do
+ 102   3                              {
+ 103   4                                      KEY=0x1f;
+ 104   4                              }while(KEY!=0x1f);//等待松开按键
+ 105   3                      }else if((KEY&0x1f)==0x1D)//上按键
+ 106   2                      {
+ 107   3                              do
+ 108   3                              {
+ 109   4                              KEY=0x1f;
+ 110   4                              }while(KEY!=0x1f);//等待松开按键
+ 111   3                              while(!VS_DREQ);
+ 112   3                              if(VOL!=0)
+ 113   3                                      VOL=VOL-10;
+ 114   3                              VolSetting();
+ 115   3                      }else if((KEY&0x1f)==0x1E)//右按键
+ 116   2                      {
+ 117   3                              do
+C51 COMPILER V9.01   MAIN                                                                  03/10/2019 15:11:42 PAGE 3   
+
+ 118   3                              {
+ 119   4                              KEY=0x1f;
+ 120   4                              }while(KEY!=0x1f);//等待松开按键
+ 121   3                              if(song_now+1==song_num)//最后一首
+ 122   3                                      song_now=0;
+ 123   3                              else
+ 124   3                                      song_now++;
+ 125   3                              OLEDClear();                       //oled显示
+ 126   3                              for(a=0;a<8;a++)
+ 127   3                                      OLEDShowChar(a*8,0,M1[song_now].name[a]);
+ 128   3                              music_cluster=M1[song_now].cluster;
+ 129   3                              Mp3SoftReset();
+ 130   3                              now_play_cluster_num=0;
+ 131   3                              OpenFile(music_cluster);
+ 132   3                      }
+ 133   2              }       
+ 134   1      }
+ 135          
+ 136          void PlaySong(u8 num)
+ 137          {
+ 138   1              u8 a;
+ 139   1              now_play_cluster_num=0;
+ 140   1              OLEDClear();
+ 141   1              for(a=0;a<8;a++)
+ 142   1                      OLEDShowChar(a*8,0,M1[num].name[a]);  //oled显示
+ 143   1              Mp3SoftReset();
+ 144   1              music_cluster=M1[num].cluster;  
+ 145   1      //      while(music_cluster!=0x0fffffff)//结束
+ 146   1              while(now_play_cluster_num<=M1[num].occupied_sectors)
+ 147   1              {
+ 148   2      //              UARTSendString("Next");
+ 149   2      //              UARTSendString("music_cluster");
+ 150   2      //              UARTSendNum(music_cluster);
+ 151   2                      OpenFile(music_cluster);
+ 152   2                      Mp3PlayDat(Data);
+ 153   2      //              music_cluster=CalculateNextCluster(music_cluster);
+ 154   2                      music_cluster++;
+ 155   2                      now_play_cluster_num++;
+ 156   2                      KeyDetect();//按键检测
+ 157   2      
+ 158   2              }
+ 159   1              OpenFile(music_cluster);
+ 160   1              Mp3PlayDat(Data);       //将当前簇播放结束
+ 161   1              Mp3Play2048zero();
+ 162   1      }
+ 163          
+ 164          
+ 165          
+ 166          //void PlaySongHalf()             //提前知道有一文件在6簇,尝试和vs1003直连
+ 167          //{
+ 168          //      u16 i,addr,a;
+ 169          //      Mp3SoftReset(); 
+ 170          //      addr=CalculateAddr(M1[0].cluster);
+ 171          //      UARTSendString("music_cluster_addr");
+ 172          //      UARTSendNum(addr);
+ 173          ////    addr=8196;
+ 174          //      while(1)
+ 175          //      {
+ 176          //              i=16;
+ 177          //              SDReadBlockHalf(addr);//SD数据开
+ 178          //              while(i>0)                        
+ 179          //              {       
+C51 COMPILER V9.01   MAIN                                                                  03/10/2019 15:11:42 PAGE 4   
+
+ 180          ////                    UARTSendString("Here");         
+ 181          //                      while(VS_DREQ==1)
+ 182          //                      {
+ 183          ////                            UARTSendString("Send");
+ 184          //                              VS_XCS=1;
+ 185          //                              VS_XDCS=0; //1003数据片选开
+ 186          //                              for(a=0;a<256;a++)       //读取32字节
+ 187          //                              {
+ 188          //                                      SCLK=1;
+ 189          //                                      MOSI=MISO;
+ 190          //                                      SCLK=0;
+ 191          //                              }
+ 192          //                              VS_XDCS=1;
+ 193          //                              i--;
+ 194          //                      }
+ 195          //              }
+ 196          //              VS_XDCS=1;
+ 197          //              addr++;
+ 198          //              SDRead();                 //16位crc
+ 199          //              SDRead();
+ 200          //              SD_CS=1;
+ 201          //              SPIWrite(0xff);
+ 202          //      }
+ 203          //}
+ 204          
+ 205          
+ 206          
+ 207          
+ 208          void main()
+ 209          {
+ 210   1      //      u8 flag;
+ 211   1      
+ 212   1              UsartInit();
+ 213   1              DelayMs(1);
+ 214   1      //      ButtonInit();              
+ 215   1              UARTSendString("串口初始化完成");
+ 216   1              OLEDInit();
+ 217   1              OLEDClear();
+ 218   1              UARTSendString("oled初始化完成");
+ 219   1              DelayMs(1);
+ 220   1              OLEDShowString(0,0,"Loading...");
+ 221   1              UARTSendString("开始初始化SD卡");       
+ 222   1              spi_slow=1;
+ 223   1      
+ 224   1              DelayMs(100);    //不能省!!!!!!!!!!!!!!!
+ 225   1              SDInit();
+ 226   1              if(SD_type==2)
+ 227   1                      UARTSendString("SD1");
+ 228   1              else if(SD_type==3)
+ 229   1                      UARTSendString("SDmmc");
+ 230   1              else 
+ 231   1              {
+ 232   2                      UARTSendString("失败");
+ 233   2                      OLEDShowString(0,0,"SDcard error");
+ 234   2                      while(1);
+ 235   2              }
+ 236   1              spi_slow=0;
+ 237   1              UARTSendString("Fat初始化开始");
+ 238   1              fatInit();
+ 239   1              
+ 240   1              UARTSendString("Fat初始化完成");
+ 241   1              UARTSendString("vs1003Reset");
+C51 COMPILER V9.01   MAIN                                                                  03/10/2019 15:11:42 PAGE 5   
+
+ 242   1              Mp3Reset();//vs1003硬复位
+ 243   1              Mp3SoftReset(); 
+ 244   1      //      SinTest();
+ 245   1              UARTSendString("搜索音乐中");
+ 246   1              FindMP3(2);
+ 247   1              UARTSendString("搜索完成,歌曲数目为:");
+ 248   1              UARTSendNum(song_num);
+ 249   1              OLEDShowString(0,0,"find ");
+ 250   1              OLEDShowNum(40,0,song_num);
+ 251   1              OLEDShowString(48,0," song");
+ 252   1              DelayMs(250);
+ 253   1              DelayMs(250);
+ 254   1              DelayMs(250);
+ 255   1              DelayMs(250);
+ 256   1              if(song_num==0)
+ 257   1              {
+ 258   2                      OLEDClear();
+ 259   2                      OLEDShowString(0,0,"NO song");
+ 260   2                      while(1);
+ 261   2              }       
+ 262   1              UARTSendString("开始播放...");
+ 263   1              //音量尝试
+ 264   1              DelayMs(10);
+ 265   1              spi_slow=1;
+ 266   1              VS_XCS=0;
+ 267   1              VS_XDCS=1;
+ 268   1              SPIWrite(0x03);
+ 269   1              SPIWrite(0x00);
+ 270   1              UARTSendNum(SPIRead());
+ 271   1              UARTSendNum(SPIRead());
+ 272   1              VS_XCS=1;
+ 273   1              while(!VS_DREQ) UARTSendString("wait");
+ 274   1              spi_slow=0;
+ 275   1      //      PlaySongHalf();
+ 276   1      
+ 277   1              for(song_now=0;song_now<song_num;song_now++)
+ 278   1                      PlaySong(song_now);
+ 279   1      
+ 280   1      
+ 281   1              while(1);
+ 282   1                      
+ 283   1      }
+ 284          
+ 285          //void ReadIR() interrupt 0
+ 286          //{
+ 287          //      u8 i,j,k,dat[4]=0;
+ 288          //      u16 a,error;
+ 289          //      DelayMs(7);
+ 290          //      if(IRIN==0)//接收到正确信号
+ 291          //      {
+ 292          //              DelayMs(5);
+ 293          //              error=300;
+ 294          //              while(IRIN==1||error==0)        error--;//等待起始码过去
+ 295          //              for(j=0;j<4;j++)
+ 296          //              {
+ 297          //                      for(i=0;i<8;i++)
+ 298          //                      {
+ 299          //                              a=0;
+ 300          //                              while(IRIN==0);
+ 301          //                              while(IRIN==1) a++;     //开始计算1的时间
+ 302          //                              dat[k]<<=1; 
+ 303          //                              if(a>70)//为1
+C51 COMPILER V9.01   MAIN                                                                  03/10/2019 15:11:42 PAGE 6   
+
+ 304          //                                      dat[k]|=1;
+ 305          //                              else
+ 306          //                                      dat[k]|=0;
+ 307          //                      }
+ 308          //              }               
+ 309          //      }
+ 310          //      
+ 311          //
+ 312          //      if(dat[3]==0x44)//播放暂停键
+ 313          //      {
+ 314          //
+ 315          //      }else if(dat[3]==0)     //上一首0x40
+ 316          //      {
+ 317          //              if(song_now==0)//第一首
+ 318          //                      song_now=song_num-1;
+ 319          //              else
+ 320          //                      song_now--;
+ 321          //              OLEDClear();                       //oled显示
+ 322          //              for(a=0;a<8;a++)
+ 323          //                      OLEDShowChar(a*8,0,M1[song_now].name[a]);
+ 324          //              music_cluster=M1[song_now].cluster;
+ 325          //              Mp3SoftReset();
+ 326          //              OpenFile(music_cluster);
+ 327          //
+ 328          //                                      
+ 329          //      }else if(dat[3]==1)     //下一首0x43
+ 330          //      {
+ 331          //              if(song_now+1==song_num)//最后一首
+ 332          //                      song_now=0;
+ 333          //              else
+ 334          //                      song_now++;
+ 335          //              OLEDClear();                       //oled显示
+ 336          //              for(a=0;a<8;a++)
+ 337          //                      OLEDShowChar(a*8,0,M1[song_now].name[a]);
+ 338          //              music_cluster=M1[song_now].cluster;
+ 339          //              Mp3SoftReset();
+ 340          //              OpenFile(music_cluster);
+ 341          //      }else if(dat[3]==2)     //音量小0x15
+ 342          //      {
+ 343          //              if(VOL!=250)
+ 344          //                      VOL=VOL+10;
+ 345          //              VolSetting();
+ 346          //      }else if(dat[3]==3)     //音量大0x09
+ 347          //      {
+ 348          //              if(VOL!=0)
+ 349          //                      VOL=VOL-10;
+ 350          //              VolSetting();
+ 351          //      }
+ 352          ////}
+ 353          //u8 ButtonScan()
+ 354          //{
+ 355          //              button_up=1;
+ 356          //              if(button_control==1)//上按键被按下
+ 357          //                      return 1;
+ 358          //              button_down=1;
+ 359          //              if(button_control==1)//下按键被按下
+ 360          //                      return 2;
+ 361          //              button_left=1;
+ 362          //              if(button_control==1)//左按键被按下
+ 363          //                      return 3;
+ 364          //              button_right=1;//右按键被按下
+ 365          //              if(button_control==1)
+C51 COMPILER V9.01   MAIN                                                                  03/10/2019 15:11:42 PAGE 7   
+
+ 366          //                      return 4;
+ 367          //              button_centre=1;//中间按键被按下
+ 368          //              if(button_control==1)
+ 369          //                      return 5;
+ 370          //}
+ 371          //
+ 372          //void ButtonInt0() interrupt 0
+ 373          //{
+ 374          //      DelayMs(1);     //消抖
+ 375          //      ButtonScan();
+ 376          //                      
+ 377          //      
+ 378          //}
+ 379           
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1148    ----
+   CONSTANT SIZE    =    192    ----
+   XDATA SIZE       =    348       3
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

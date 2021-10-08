@@ -1,0 +1,301 @@
+C51 COMPILER V9.01   SD                                                                    03/10/2019 15:11:42 PAGE 1   
+
+
+C51 COMPILER V9.01, COMPILATION OF MODULE SD
+OBJECT MODULE PLACED IN sd.OBJ
+COMPILER INVOKED BY: d:\Keil\C51\BIN\C51.EXE sd.c LARGE BROWSE DEBUG OBJECTEXTEND
+
+line level    source
+
+   1          #include<sd.h>
+   2          #include<Usart.h>
+   3          
+   4          u8 xdata Block[512];//速度较快
+   5          u8 xdata *Data;
+   6          u8 SD_type;//SD卡类型,0为SD,1为SDHC,2为SD1.0,3为MMC,4为不支持
+   7          
+   8          
+   9          //SD发送指令  cmd 指令  argu 参数/地址  CRC 校验码
+  10          //在SPI驱动模式下,不需要CRC校验,只需要对CMD0进行CRC
+  11          u8 SDCmd(u8 cmd,u32 argu,u8 crc)
+  12          {
+  13   1              u8 resp,i;
+  14   1              SPIWrite(cmd|0x40);     //最高的两位为0 1，这个是所有命令中约定的起始方式
+  15   1              SPIWrite((u8)(argu>>24));
+  16   1              SPIWrite((u8)(argu>>16&0xff));
+  17   1              SPIWrite((u8)(argu>>8&0xff));
+  18   1              SPIWrite((u8)argu&0xff);
+  19   1              SPIWrite(crc);
+  20   1              
+  21   1              i=30;
+  22   1              do{
+  23   2                      resp=SPIRead();
+  24   2                      i--;
+  25   2                      if(i==0)
+  26   2                              return 0;//响应超时
+  27   2              }while(resp==0xff);
+  28   1              return resp;
+  29   1      }
+  30          
+  31          //SD卡初始化
+  32          u8 SDInit()
+  33          {
+  34   1              u8 i;
+  35   1              u8 resp=0;
+  36   1              SCLK = 1;
+  37   1              SD_CS=1;
+  38   1              MOSI = 1;
+  39   1              MISO = 1;
+  40   1              // 初始化时钟
+  41   1              for (i = 0; i < 10; i++) 
+  42   1                      SDWrite(0xff);
+  43   1              SCLK = 0;
+  44   1              //复位SD卡
+  45   1      //      DelayMs(1);
+  46   1              i=30;
+  47   1      //      SD_CS=1;
+  48   1              SPIWrite(0xff); 
+  49   1              SD_CS=0;
+  50   1              do
+  51   1              {
+  52   2                      resp=SDCmd(CMD0,0,0x95);                
+  53   2                      i--;
+  54   2                      if(i==0) return 0;  //复位失败
+  55   2                      UARTSendNum(resp);
+C51 COMPILER V9.01   SD                                                                    03/10/2019 15:11:42 PAGE 2   
+
+  56   2              }while(resp!=0x01);
+  57   1              SD_CS=1;
+  58   1      
+  59   1              
+  60   1      //      SD_CS=1;//关片选
+  61   1      //      for(i=0;i<250;i++)
+  62   1      //              SPIWrite(0xff);//74以上脉冲
+  63   1      //      SD_CS=0;//开片选
+  64   1      
+  65   1      //      while(resp!=0x01)//检测SD卡是否应答,应答信号0x01
+  66   1      //      {
+  67   1      //      SDCmd(CMD0,0,0x95);//仅初始化需要CRC
+  68   1      //      resp=SPIRead();
+  69   1      //      i++;
+  70   1      //      if(i>200)//200次无应答,返回0
+  71   1      //              return 0;
+  72   1      //      }
+  73   1      
+  74   1      //      DelayMs(1);
+  75   1      //      SD_CS=1;
+  76   1              SPIWrite(0xff);
+  77   1              SD_CS=0;
+  78   1              resp=SDCmd(CMD8,0x1aa,0x87);
+  79   1              SPIRead();
+  80   1              SPIRead();
+  81   1              SPIRead();
+  82   1              SD_CS=1;
+  83   1              //初始化
+  84   1              UARTSendString("CMD8回应为");
+  85   1              UARTSendNum(resp);
+  86   1      
+  87   1      
+  88   1              if(resp==0x01)  //检测是否为SD2.0
+  89   1              {
+  90   2              UARTSendString("为SD2.0");
+  91   2                      i=30;
+  92   2                      do
+  93   2                      {
+  94   3      //              SD_CS=1;
+  95   3      //              SPIWrite(0xff);
+  96   3                      SD_CS=0;
+  97   3                      SDCmd(CMD55,0,0xff);
+  98   3                      resp=SDCmd(ACMD41,0,0xff);                //0x40000000
+  99   3                      SD_CS=1;
+ 100   3                      i--;
+ 101   3                      if(i==0)
+ 102   3                              return 0;//ACMD命令初始化未完成
+ 103   3                      }while(resp!=0);
+ 104   2                              
+ 105   2                      //检查是否为SDHC,即内存容量大于4G
+ 106   2                      SPIWrite(0xff);
+ 107   2                      SD_CS=0;
+ 108   2                      if(0==SDCmd(58,0,0xff))
+ 109   2                      {
+ 110   3                      resp=SPIRead();
+ 111   3                      SPIRead();
+ 112   3                      SPIRead();
+ 113   3                      SPIRead();
+ 114   3                      }
+ 115   2                      SD_CS=1;
+ 116   2                      UARTSendNum(resp);
+ 117   2                      if(resp&0x40)
+C51 COMPILER V9.01   SD                                                                    03/10/2019 15:11:42 PAGE 3   
+
+ 118   2                              SD_type=1; //SDHC为扇区寻址
+ 119   2                      else
+ 120   2                              SD_type=0;      
+ 121   2              }
+ 122   1      
+ 123   1              if(resp==0x05)  //检测SD卡是否为SD1.0或MMC       ==0x05
+ 124   1              {
+ 125   2      //              SD_CS=1;
+ 126   2                      SPIWrite(0xff);
+ 127   2                      SD_CS=0;
+ 128   2                      i=30;
+ 129   2                      SDCmd(CMD55,0x0,0xff);
+ 130   2                      resp=SDCmd(ACMD41,0,0xff);
+ 131   2                      if(resp<=1)              //41指令被接受
+ 132   2                      {
+ 133   3                              SD_type=2;      //SD1.0
+ 134   3                              while(resp&0x01!=0)
+ 135   3                              {
+ 136   4                              SDCmd(CMD55,0x0,0xff);
+ 137   4                              resp=SDCmd(ACMD41,0,0xff);
+ 138   4                              }
+ 139   3                              SD_CS=1;
+ 140   3                      }else{          //MMC卡,用cmd1进行初始化
+ 141   3                      i=30;
+ 142   3                      do
+ 143   3                      {
+ 144   4                              i--;
+ 145   4                              resp=SDCmd(CMD1,0x0,0xff);
+ 146   4                              if(i==0)
+ 147   4                                      return 0;//MMD初始化失败
+ 148   4                      }while(resp!=0);
+ 149   3                              if(!resp)
+ 150   3                                      SD_type=3;//SD_mmc      
+ 151   3                              else
+ 152   3                                      SD_type=4;//不支持      
+ 153   3                      }
+ 154   2                      SD_CS=1;
+ 155   2                      SPIWrite(0xff);
+ 156   2      
+ 157   2              }
+ 158   1              if(0!=SDCmd(16,0x200,0xff))
+ 159   1              {
+ 160   2                      SD_type=4;//该卡扇区并不为512字节
+ 161   2                      return 0;
+ 162   2              }
+ 163   1                      
+ 164   1       
+ 165   1      //      //sd卡设置
+ 166   1      //      SD_CS=1;
+ 167   1      //      SPIWrite(0xff);
+ 168   1      //      SD_CS=0;
+ 169   1      //      resp=0x00;
+ 170   1      //      i=0;
+ 171   1      //      while(resp!=0x01)//检测SD卡是否应答,应答信号0x01
+ 172   1      //      {
+ 173   1      //      SDCmd(CMD1,0,0xff); //设置为SPI模式
+ 174   1      //      resp=SPIRead();
+ 175   1      //      i++;
+ 176   1      //      if(i>200)//200次无应答,返回2
+ 177   1      //              return 2;
+ 178   1      //      }
+ 179   1      //      SD_CS=1;
+C51 COMPILER V9.01   SD                                                                    03/10/2019 15:11:42 PAGE 4   
+
+ 180   1      //      SPIWrite(0xff);
+ 181   1              return 1;
+ 182   1      }
+ 183          
+ 184          
+ 185          
+ 186          void SDWrite(u8 dat)
+ 187          {
+ 188   1              SCLK=0;
+ 189   1              SD_CS=0;
+ 190   1              SPIWrite(dat);
+ 191   1              SD_CS=1;
+ 192   1      }
+ 193          
+ 194          
+ 195          u8 SDRead()
+ 196          {
+ 197   1              u8 dat=0;
+ 198   1              SCLK=0;
+ 199   1              SD_CS=0;
+ 200   1              dat=SPIRead();
+ 201   1              SD_CS=1;
+ 202   1              return dat;     
+ 203   1      }
+ 204          
+ 205          //读取块,返回数组首地址 **********读取块命令,89c52ram不够用,后面需手动读取512个字节和2字节的crc , 并拉高CS
+             -,8个时钟
+ 206          u8 *SDReadBlock(u32 addr)
+ 207          {
+ 208   1              u16 i;
+ 209   1              u8 tmp=0xff;
+ 210   1              SPIWrite(0xff);
+ 211   1              SD_CS=0;        
+ 212   1              if(SD_type!=1)
+ 213   1                      addr<<=9;//addr=addr*512 将块地址转为字节地址,也可以用addr<<=9
+ 214   1      //      SD_CS=1;
+ 215   1      //      SPIWrite(0xff);
+ 216   1      //      SD_CS=0;
+ 217   1      //      SDCmd(CMD17,addr,0xff);//读取指令 
+ 218   1      //      i=30;
+ 219   1      //      tmp=0;
+ 220   1      //      while(tmp!=0xfe)
+ 221   1      //      {
+ 222   1      //              tmp=SDRead();
+ 223   1      //
+ 224   1      //      }
+ 225   1              i=30;
+ 226   1                      tmp=SDCmd(CMD17,addr,0xFF); //CMD17
+ 227   1              while(tmp!=0xfe)
+ 228   1              {
+ 229   2                      tmp=SDRead();
+ 230   2                      i--;
+ 231   2                      if(i==0)
+ 232   2                      {
+ 233   3                      return 0;
+ 234   3                      }
+ 235   2              }
+ 236   1              for(i=0;i<512;i++)
+ 237   1              {
+ 238   2                      Block[i]=SDRead();//读出数据
+ 239   2              }
+ 240   1              SDRead();
+C51 COMPILER V9.01   SD                                                                    03/10/2019 15:11:42 PAGE 5   
+
+ 241   1              SDRead();       //16位的crc校验码
+ 242   1              SD_CS=1;
+ 243   1              SPIWrite(0xff);
+ 244   1              return Block;           
+ 245   1      }
+ 246          
+ 247          ////写块,将指向的512个字节写入addr中
+ 248          //void SDWriteBlock(u32 addr,u8 *dat)
+ 249          //{
+ 250          //
+ 251          //}
+ 252          
+ 253          
+ 254          void SDReadBlockHalf(u32 addr)   //手动读块
+ 255          {
+ 256   1              u16 i;
+ 257   1              u8 tmp=0xff;
+ 258   1              SPIWrite(0xff);
+ 259   1              SD_CS=0;        
+ 260   1              if(SD_type!=1)
+ 261   1                      addr<<=9;//addr=addr*512 将块地址转为字节地址,也可以用addr<<=9
+ 262   1              SDCmd(CMD17,addr,0xff);//读取指令 
+ 263   1              i=30;
+ 264   1              tmp=0;
+ 265   1              while(tmp!=0xfe)
+ 266   1              {
+ 267   2                      tmp=SDRead();
+ 268   2              }
+ 269   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1037    ----
+   CONSTANT SIZE    =     19    ----
+   XDATA SIZE       =    515      23
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

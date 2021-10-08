@@ -1,0 +1,279 @@
+C51 COMPILER V9.01   FAT                                                                   03/10/2019 15:11:43 PAGE 1   
+
+
+C51 COMPILER V9.01, COMPILATION OF MODULE FAT
+OBJECT MODULE PLACED IN fat.OBJ
+COMPILER INVOKED BY: d:\Keil\C51\BIN\C51.EXE fat.c LARGE BROWSE DEBUG OBJECTEXTEND
+
+line level    source
+
+   1          #include<fat.h>
+   2          #include<Usart.h>
+   3          
+   4          extern u8 xdata *Data;
+   5          extern u8 song_num;
+   6          extern struct DBR//DBR信息              //DBR是由硬盘MBR装载的程序段
+   7          {
+   8                  u16 DBR_addr;                           //DBR的扇区号,磁盘的0号扇区的 0X1C6~0X1C9
+   9                  u16 reverse_sector_num;         //保留扇区数,DBR扇区，偏移0X0E~0X0F
+  10                  u8 sector_num;                          //每簇所占扇区数目,DBR的偏移0X0D
+  11                  u16 fat1_addr;                           //FAT1起始扇区,也就是fat1表地址,FAT1起始扇区=DBR的扇区号+保留扇区数
+  12                  u32 fat_sector_num;                     //一个FAT的扇区数,也是每个fat表占用扇区数,从DBR的偏移0X24~0X27得到
+  13                  u16 root_cluster;                        //起始簇号,根目录所在簇号,DBR的偏移0X2C~0X2F得到,一般为2.
+  14                  u32 root_addr;                           //根目录起始扇区=FAT1的起始扇区号+一个FAT的扇区数×2+(起始簇号-2)x每簇的扇区数
+  15          }D1;
+  16          
+  17          //u16 FindDBR()//获取DBR扇区号
+  18          //{
+  19          //      u16 i=0;
+  20          //      Data=SDReadBlock(0);
+  21          //      for(i=0;i<512;i++)
+  22          //              UARTSendNum(Data[i]);
+  23          //      return (Data[0x1c7]<<8||Data[0x1c6]);
+  24          ////    u16 DBR=0,i;
+  25          ////    SDReadBlock(0);
+  26          ////    for(i=0;i<0x1c6;i++)
+  27          ////            SDRead();
+  28          ////    DBR=SDRead();
+  29          ////    DBR|=SDRead()<<8;
+  30          ////    for(i=0;i<0x3B;i++)
+  31          ////            SDRead();
+  32          ////    SD_CS=1;
+  33          ////    SPIWrite(0xff);
+  34          ////    return DBR;
+  35          //}
+  36          
+  37          extern struct Music //mp3文件信息
+  38          {
+  39                  u8 name[8];        
+  40                  u32 cluster;
+  41                  u32 occupied_sectors;   
+  42          }M1[20];
+  43          
+  44          void fatInit()//Fat初始化
+  45          {
+  46   1      
+  47   1              Data=SDReadBlock(0);
+  48   1              if(Data[0]==0xeb&&Data[1]==0x58&&Data[2]==0x90&&Data[3]==0x4d) //无MBR
+  49   1                      D1.DBR_addr=0;
+  50   1              else{
+  51   2                      D1.DBR_addr=Data[0x1c7]<<8|Data[0x1c6];
+  52   2              }
+  53   1              UARTSendString("DBR");
+  54   1              UARTSendNum(D1.DBR_addr);
+  55   1      //      UARTSendNum(D1.DBR_addr);
+C51 COMPILER V9.01   FAT                                                                   03/10/2019 15:11:43 PAGE 2   
+
+  56   1      //      UARTSendString("DBR");
+  57   1      //      SDReadBlock(D1.DBR_addr);
+  58   1      //      UARTSendString("第一段");
+  59   1      //      for(i=0;i<0x0d;i++)
+  60   1      //              UARTSendNum(SDRead());
+  61   1      //      D1.sector_num=SDRead();           //0x0d
+  62   1      //      D1.reverse_sector_num=SDRead();   //0x0e
+  63   1      //      D1.reverse_sector_num|=SDRead()<<8;  //0x0f
+  64   1      //      UARTSendString("第二段");
+  65   1      //      for(i=0;i<14;i++)
+  66   1      //              SDRead();
+  67   1      //      D1.fat_sector_num=SDRead();       //0x24
+  68   1      //      D1.fat_sector_num|=SDRead()<<8;   
+  69   1      //      D1.fat_sector_num|=SDRead()<<16;
+  70   1      //      D1.fat_sector_num|=SDRead()<<24;
+  71   1      //      for(i=0;i<4;i++)
+  72   1      //              SDRead();
+  73   1      //      D1.root_cluster=SDRead();//0x2c
+  74   1      //      D1.root_cluster|=SDRead()<<8;
+  75   1      //
+  76   1      //      for(i=0;i<0x1d5;i++)
+  77   1      //              UARTSendNum(SDRead());
+  78   1      //      SD_CS=1;
+  79   1      //      D1.fat1_addr=D1.DBR_addr+D1.reverse_sector_num;
+  80   1      //      D1.root_addr=D1.fat1_addr+D1.fat_sector_num*2+(D1.root_cluster-2)*D1.sector_num;
+  81   1      //
+  82   1      //
+  83   1      
+  84   1      
+  85   1      
+  86   1              Data=SDReadBlock(D1.DBR_addr);//读取DBR数据
+  87   1              D1.reverse_sector_num=Data[0x0f]<<8|Data[0x0e];
+  88   1              D1.sector_num=Data[0x0d];
+  89   1              D1.fat_sector_num=Data[0x27]<<24|Data[0x26]<<16|Data[0x25]<<8|Data[0x24];
+  90   1              D1.root_cluster=Data[0x2D]<<8|Data[0x2C];
+  91   1              D1.fat1_addr=D1.DBR_addr+D1.reverse_sector_num;
+  92   1              D1.root_addr=D1.fat1_addr+D1.fat_sector_num*2+512*(D1.root_cluster-2);
+  93   1      
+  94   1              UARTSendString("D1.sector_num");
+  95   1              UARTSendNum(D1.sector_num);
+  96   1              UARTSendString("D1.reverse_sector_num");
+  97   1              UARTSendNum(D1.reverse_sector_num);
+  98   1              UARTSendString("D1.fat_sector_num");
+  99   1              UARTSendNum(D1.fat_sector_num);
+ 100   1              UARTSendString("D1.root_cluster");
+ 101   1              UARTSendNum(D1.root_cluster);
+ 102   1              UARTSendString("D1.fat1_addr");
+ 103   1              UARTSendNum(D1.fat1_addr);
+ 104   1              UARTSendString("D1.root_addr");
+ 105   1              UARTSendNum(D1.root_addr);
+ 106   1      
+ 107   1      
+ 108   1      }
+ 109          
+ 110          
+ 111          void OpenRoot()//打开根目录
+ 112          {
+ 113   1              Data=SDReadBlock(D1.root_addr);
+ 114   1      }
+ 115          
+ 116          
+ 117          
+C51 COMPILER V9.01   FAT                                                                   03/10/2019 15:11:43 PAGE 3   
+
+ 118          u32 CalculateCluster(u32 addr)  //计算该地址的簇号
+ 119          {
+ 120   1              return (addr-D1.root_addr)/D1.sector_num+2;
+ 121   1      }
+ 122          
+ 123          u32 CalculateAddr(u32 Cluster)//用簇号计算所在扇区
+ 124          {
+ 125   1              return D1.root_addr+(Cluster-2)*D1.sector_num;                  
+ 126   1      }
+ 127          
+ 128          u32 CalculateNextCluster(u32 Cluster)//计算该簇号在Fat表中为第几扇区的第几个,并返回下一簇的值
+ 129          {
+ 130   1              u8 i;
+ 131   1              u32 addr,next_cluster=0; 
+ 132   1      //      UARTSendString("Cluster在fat1的位置");
+ 133   1              addr=Cluster*4;  //fat表偏移地址
+ 134   1      //      UARTSendNum(addr);
+ 135   1      //      UARTSendString("Cluster在Fat的第几分区");
+ 136   1      //      UARTSendNum(D1.fat1_addr+addr/512);
+ 137   1      //      while(next_cluster==0xff)       //c出现错误      ,再次读取
+ 138   1      //      {
+ 139   1                      Data=SDReadBlock(D1.fat1_addr+addr/512);
+ 140   1                      for(i=0;i<=4;i++)
+ 141   1                      {
+ 142   2                              next_cluster<<=8;
+ 143   2                              next_cluster|=Data[(Cluster*4)%512+4-i];        
+ 144   2                      }
+ 145   1      //      }
+ 146   1              return next_cluster;            
+ 147   1      }
+ 148          
+ 149          
+ 150          
+ 151          
+ 152          //测试用
+ 153          //u16 FindAndOpenTest()//查找并打开Test文件
+ 154          //{
+ 155          //      u8 a,sector_now=1;
+ 156          //      u32 addr;
+ 157          //      Data=SDReadBlock(D1.root_addr+(sector_now-1)*512);
+ 158          //      if(Data[a*32]==0xE5)   //是否被删除
+ 159          //              {
+ 160          //                      if(Data[0x08+a*32]==0x74&Data[0x09+a*32]==0x78&Data[0x0a+a*32]==0x74)//找到txt文件
+ 161          //                      {
+ 162          //                       addr=Data[0x15+a*32]<<24||Data[0x14+a*32]<<16||Data[0x1B+a*32]<<8||Data[0x1A+a*32];//获取地址
+ 163          //                      }
+ 164          //              }
+ 165          //      Data=SDReadBlock(addr);//打开该文件
+ 166          //      return 0;
+ 167          //  
+ 168          //}
+ 169          
+ 170          
+ 171          
+ 172          
+ 173          
+ 174          
+ 175          
+ 176          
+ 177          u8 FindMP3(u32 Cluster) //在某目录中寻找MP3文件,并读取文件名,起始簇号和对应长度
+ 178          {
+ 179   1              u8 a,i;
+C51 COMPILER V9.01   FAT                                                                   03/10/2019 15:11:43 PAGE 4   
+
+ 180   1              u32 next_cluster,addr;
+ 181   1              addr=CalculateAddr(Cluster);
+ 182   1              UARTSendString("所找地址");
+ 183   1              UARTSendNum(addr);
+ 184   1              
+ 185   1              Data=SDReadBlock(addr);
+ 186   1              for(a=0;a<16;a++)
+ 187   1              {
+ 188   2                      if(song_num==19)           //超过20首结束搜索
+ 189   2                              return 1;
+ 190   2                      if(Data[a*32]!=0xE5&&Data[a*32+0xb]!=0x0F)   //是否被删除或长文件名标志
+ 191   2                      {
+ 192   3                              if((Data[0x08+a*32]==0x4D&&Data[0x09+a*32]==0x50&&Data[0x0a+a*32]==0x33)||(Data[0x08+a*32]==0x57&&Data[
+             -0x09+a*32]==0x41&&Data[0x0a+a*32]==0x56))//找到mp3文件 
+ 193   3                              {
+ 194   4                                      UARTSendString("找到音乐");
+ 195   4                                      M1[song_num].cluster=0;
+ 196   4                                      for(i=0;i<8;i++)
+ 197   4                                      {
+ 198   5                                              M1[song_num].name[i]=Data[i+a*32];
+ 199   5                                      }
+ 200   4                                      M1[song_num].cluster=(u32)Data[0x15+a*32]<<24|(u32)Data[0x14+a*32]<<16|(u32)Data[0x1B+a*32]<<8|(u32)Da
+             -ta[0x1A+a*32];
+ 201   4                                      UARTSendString("簇为");
+ 202   4                                      UARTSendNum(M1[song_num].cluster);
+ 203   4                                      //占用了多少扇区
+ 204   4                                      M1[song_num].occupied_sectors=((u32)Data[0x1f+a*32]<<24|(u32)Data[0x1e+a*32]<<16|(u32)Data[0x1d+a*32]<
+             -<8|(u32)Data[0x1c+a*32])/512;
+ 205   4      
+ 206   4                                      song_num++;
+ 207   4                              }
+ 208   3                      }
+ 209   2              }
+ 210   1                      //整个扇区搜索结束
+ 211   1              next_cluster=CalculateNextCluster(Cluster);     
+ 212   1              if(next_cluster==0x0fffffff)    
+ 213   1                      return 1;
+ 214   1              else{ 
+ 215   2                      FindMP3(next_cluster);
+ 216   2                      return 0;
+ 217   2                      }
+ 218   1                      
+ 219   1      }
+ 220          
+ 221          u8 OpenFile(u32 Cluster)//打开该簇
+ 222          {
+ 223   1              Data=SDReadBlock(CalculateAddr(Cluster));
+ 224   1              return 1;
+ 225   1      }
+ 226          
+ 227          u32 OpenNextCluster(u32 Cluster)//打开当前簇的下一个簇
+ 228          {
+ 229   1              u32 NextCluster=0;
+ 230   1              NextCluster=CalculateNextCluster(Cluster);
+ 231   1              if(NextCluster==0x0fffff)//为最后一簇
+ 232   1                      return 0;
+ 233   1              else 
+ 234   1              {
+ 235   2                      Data=SDReadBlock(CalculateAddr(NextCluster));     //打开该簇的首扇区
+ 236   2                      return 1;
+ 237   2              }
+ 238   1      }
+C51 COMPILER V9.01   FAT                                                                   03/10/2019 15:11:43 PAGE 5   
+
+ 239          
+ 240          
+ 241          //void OpenMusicFile(u8 i)      //打开mp3的首扇区
+ 242          //{
+ 243          //      Data=SDReadBlock(M1[i].addr);
+ 244          //}
+ 245          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   2219    ----
+   CONSTANT SIZE    =    123    ----
+   XDATA SIZE       =   ----      30
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

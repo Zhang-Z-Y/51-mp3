@@ -1,0 +1,9 @@
+"main.obj",
+"sd.obj",
+"SPI.obj",
+"fat.obj",
+"oled.obj",
+"vs1003.obj",
+"Usart.obj" 
+TO "temp" 
+RAMSIZE(256) 
